@@ -1,57 +1,94 @@
+using System;
+using System.Collections.Generic;
+
 /// <summary>
-/// This queue is circular.  When people are added via AddPerson, then they are added to the 
-/// back of the queue (per FIFO rules).  When GetNextPerson is called, the next person
-/// in the queue is saved to be returned and then they are placed back into the back of the queue.  Thus,
-/// each person stays in the queue and is given turns.  When a person is added to the queue, 
-/// a turns parameter is provided to identify how many turns they will be given.  If the turns is 0 or
-/// less than they will stay in the queue forever.  If a person is out of turns then they will 
-/// not be added back into the queue.
+/// Maintains a circular queue of people with a number of turns each.
+/// - AddPerson(name, turns): adds a person with the given original turns.
+///    * turns <= 0 is considered "infinite" turns (never consumed).
+/// - GetNextPerson(): dequeues the next person and returns a Person object with the original Turns value.
+///    * For finite-turn players, the remaining count is decremented and re-enqueued only if they still have remaining turns (> 0).
+///    * For infinite-turn players (turns <= 0), they are always re-enqueued and their original Turns value is preserved.
+/// - Length property returns current number of entries in the queue.
+/// - If the queue is empty, GetNextPerson throws InvalidOperationException with message "No one in the queue."
 /// </summary>
 public class TakingTurnsQueue
 {
-    private readonly PersonQueue _people = new();
-
-    public int Length => _people.Length;
-
-    /// <summary>
-    /// Add new people to the queue with a name and number of turns
-    /// </summary>
-    /// <param name="name">Name of the person</param>
-    /// <param name="turns">Number of turns remaining</param>
-    public void AddPerson(string name, int turns)
+    // Internal queue entry tracks original turns and remaining finite turns separately
+    private class Entry
     {
-        var person = new Person(name, turns);
-        _people.Enqueue(person);
+        public string Name { get; }
+        public int OriginalTurns { get; }
+        // For finite players, Remaining is the number of times left to be returned.
+        // For infinite players (OriginalTurns <= 0) this value is unused.
+        public int Remaining;
+
+        public bool IsInfinite => OriginalTurns <= 0;
+
+        public Entry(string name, int originalTurns)
+        {
+            Name = name;
+            OriginalTurns = originalTurns;
+            Remaining = originalTurns > 0 ? originalTurns : 0;
+        }
+    }
+
+    private readonly Queue<Entry> _queue;
+
+    public TakingTurnsQueue()
+    {
+        _queue = new Queue<Entry>();
     }
 
     /// <summary>
-    /// Get the next person in the queue and return them. The person should
-    /// go to the back of the queue again unless the turns variable shows that they 
-    /// have no more turns left.  Note that a turns value of 0 or less means the 
-    /// person has an infinite number of turns.  An error exception is thrown 
-    /// if the queue is empty.
+    /// Number of entries currently in the queue.
+    /// </summary>
+    public int Length => _queue.Count;
+
+    /// <summary>
+    /// Adds a person to the end of the queue.
+    /// </summary>
+    /// <param name="name">Person's name</param>
+    /// <param name="turns">Number of turns (0 or less means infinite)</param>
+    public void AddPerson(string name, int turns)
+    {
+        if (name == null) throw new ArgumentNullException(nameof(name));
+        var entry = new Entry(name, turns);
+        _queue.Enqueue(entry);
+    }
+
+    /// <summary>
+    /// Dequeues and returns the next person. If the person still has remaining turns (or infinite),
+    /// they will be re-enqueued per the requirements.
+    /// Throws InvalidOperationException with message "No one in the queue." if there are no entries.
     /// </summary>
     public Person GetNextPerson()
     {
-        if (_people.IsEmpty())
+        if (_queue.Count == 0)
         {
             throw new InvalidOperationException("No one in the queue.");
         }
+
+        Entry e = _queue.Dequeue();
+
+        // Build and return a Person object with the original turns value preserved.
+        Person returned = new Person(e.Name, e.OriginalTurns);
+
+        if (e.IsInfinite)
+        {
+            // Re-enqueue unchanged for infinite-turn players
+            _queue.Enqueue(e);
+        }
         else
         {
-            Person person = _people.Dequeue();
-            if (person.Turns > 1)
+            // Decrement remaining and re-enqueue only if still have > 0 remaining
+            e.Remaining--;
+            if (e.Remaining > 0)
             {
-                person.Turns -= 1;
-                _people.Enqueue(person);
+                _queue.Enqueue(e);
             }
-
-            return person;
+            // else do not re-enqueue; person's finite quota exhausted
         }
-    }
 
-    public override string ToString()
-    {
-        return _people.ToString();
+        return returned;
     }
 }
